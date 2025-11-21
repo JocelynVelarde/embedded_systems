@@ -142,67 +142,73 @@ Error_Handler();
   {
 	  /* Robust receive loop: read one message if available and drain FIFO */
 	  FDCAN_RxHeaderTypeDef localHeader;
-	  int ret;
+	        int ret;
 
-	  /* Try to read first message */
-	  ret = HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &localHeader, RxData);
+	        /* Try to read first message */
+	        ret = HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &localHeader, RxData);
 
-	  /* Robust receive loop */
-	  while (ret == HAL_OK) {
-	      // FIX: Handle cases where DataLength is raw bytes (0x8) OR encoded (0x80000)
-	      uint8_t dlc_bytes;
-	      if (localHeader.DataLength > 0x0F) {
-	          // Encoded format (Standard HAL behavior: 0x00080000)
-	          dlc_bytes = (localHeader.DataLength >> 16) & 0x0F;
-	      } else {
-	          // Raw format (Your current behavior: 0x00000008)
-	          dlc_bytes = (uint8_t)localHeader.DataLength;
-	      }
+	        /* Process all available messages */
+	        while (ret == HAL_OK) {
+	            // 1. FIX: Calculate DLC correctly (handling raw vs encoded)
+	            uint8_t dlc_bytes;
+	            if (localHeader.DataLength > 0x0F) {
+	                dlc_bytes = (localHeader.DataLength >> 16) & 0x0F;
+	            } else {
+	                dlc_bytes = (uint8_t)localHeader.DataLength;
+	            }
 
-	      printf("RECV: ID=0x%lX | DLC=%u | Data: ",
-	              localHeader.Identifier,
-	              dlc_bytes);
+	            printf("RECV: ID=0x%lX | DLC=%u", localHeader.Identifier, dlc_bytes);
 
-	      /* Print raw bytes */
-	      for (int i = 0; i < dlc_bytes && i < 8; ++i) {
-	          printf("%02X ", RxData[i]);
-	      }
+	            // 2. Decode Data if we have a full frame
+	            if (dlc_bytes >= 8) {
+	                // --- Standard Float Decoding (Bytes 0-3) ---
+	                // Useful for Distance (0x30) and Orientation/Accel (0x40-0x42)
+	                union { float f; uint8_t b[4]; } conv;
+	                conv.b[0] = RxData[0];
+	                conv.b[1] = RxData[1];
+	                conv.b[2] = RxData[2];
+	                conv.b[3] = RxData[3];
+	                float val1 = conv.f;
 
-	      /* Decode Floats if we have a full 8-byte frame */
-	      if (dlc_bytes == 8) {
-	          union { float f; uint8_t b[4]; } conv;
+	                // --- Logic Split based on ID ---
+	                if (localHeader.Identifier == 0x30) {
+	                    // ID 0x30: Float (Distance) + Int32 (Encoder Count)
 
-	          // Decode First Float (Bytes 0-3)
-	          conv.b[0] = RxData[0];
-	          conv.b[1] = RxData[1];
-	          conv.b[2] = RxData[2];
-	          conv.b[3] = RxData[3];
-	          float val1 = conv.f;
+	                    // We need to re-interpret bytes 4-7 as an integer
+	                    int32_t encoderCount;
+	                    // Use memcpy for safe type punning
+	                    memcpy(&encoderCount, &RxData[4], sizeof(int32_t));
 
-	          // Decode Second Float (Bytes 4-7)
-	          conv.b[0] = RxData[4];
-	          conv.b[1] = RxData[5];
-	          conv.b[2] = RxData[6];
-	          conv.b[3] = RxData[7];
-	          float val2 = conv.f;
+	                    printf(" | Dist=%.2f cm | Count=%ld", val1, encoderCount);
 
-	          // Map IDs to your ESP32 sender logic
-	          if (localHeader.Identifier == 0x40) {
-	              printf(" | X=%.2f  Y=%.2f", val1, val2);
-	          } else if (localHeader.Identifier == 0x41) {
-	              printf(" | Z=%.2f  Ax=%.2f", val1, val2);
-	          } else if (localHeader.Identifier == 0x42) {
-	              printf(" | Ay=%.2f  Az=%.2f", val1, val2);
-	          } else {
-	              printf(" | F1=%.2f F2=%.2f", val1, val2);
-	          }
-	      }
+	                }
+	                else {
+	                    // IDs 0x40, 0x41, 0x42: Float + Float
 
-	      printf("\r\n");
+	                    // Decode second float (Bytes 4-7)
+	                    conv.b[0] = RxData[4];
+	                    conv.b[1] = RxData[5];
+	                    conv.b[2] = RxData[6];
+	                    conv.b[3] = RxData[7];
+	                    float val2 = conv.f;
 
-	      /* Try to get next message */
-	      ret = HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &localHeader, RxData);
-	  }
+	                    if (localHeader.Identifier == 0x40) {
+	                        printf(" | X=%.2f  Y=%.2f", val1, val2);
+	                    } else if (localHeader.Identifier == 0x41) {
+	                        printf(" | Z=%.2f  Ax=%.2f", val1, val2);
+	                    } else if (localHeader.Identifier == 0x42) {
+	                        printf(" | Ay=%.2f  Az=%.2f", val1, val2);
+	                    } else {
+	                        printf(" | F1=%.2f  F2=%.2f", val1, val2);
+	                    }
+	                }
+	            }
+
+	            printf("\r\n");
+
+	            /* Get next message */
+	            ret = HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &localHeader, RxData);
+	        }
 
     /* USER CODE END WHILE */
 
