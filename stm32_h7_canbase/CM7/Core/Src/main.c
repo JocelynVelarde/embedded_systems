@@ -148,68 +148,53 @@ Error_Handler();
 	        ret = HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &localHeader, RxData);
 
 	        /* Process all available messages */
-	        while (ret == HAL_OK) {
-	            // 1. FIX: Calculate DLC correctly (handling raw vs encoded)
-	            uint8_t dlc_bytes;
-	            if (localHeader.DataLength > 0x0F) {
-	                dlc_bytes = (localHeader.DataLength >> 16) & 0x0F;
-	            } else {
-	                dlc_bytes = (uint8_t)localHeader.DataLength;
-	            }
-
-	            printf("RECV: ID=0x%lX | DLC=%u", localHeader.Identifier, dlc_bytes);
-
-	            // 2. Decode Data if we have a full frame
-	            if (dlc_bytes >= 8) {
-	                // --- Standard Float Decoding (Bytes 0-3) ---
-	                // Useful for Distance (0x30) and Orientation/Accel (0x40-0x42)
-	                union { float f; uint8_t b[4]; } conv;
-	                conv.b[0] = RxData[0];
-	                conv.b[1] = RxData[1];
-	                conv.b[2] = RxData[2];
-	                conv.b[3] = RxData[3];
-	                float val1 = conv.f;
-
-	                // --- Logic Split based on ID ---
-	                if (localHeader.Identifier == 0x30) {
-	                    // ID 0x30: Float (Distance) + Int32 (Encoder Count)
-
-	                    // We need to re-interpret bytes 4-7 as an integer
-	                    int32_t encoderCount;
-	                    // Use memcpy for safe type punning
-	                    memcpy(&encoderCount, &RxData[4], sizeof(int32_t));
-
-	                    printf(" | Dist=%.2f cm | Count=%ld", val1, encoderCount);
-
-	                }
-	                else {
-	                    // IDs 0x40, 0x41, 0x42: Float + Float
-
-	                    // Decode second float (Bytes 4-7)
-	                    conv.b[0] = RxData[4];
-	                    conv.b[1] = RxData[5];
-	                    conv.b[2] = RxData[6];
-	                    conv.b[3] = RxData[7];
-	                    float val2 = conv.f;
-
-	                    if (localHeader.Identifier == 0x40) {
-	                        printf(" | X=%.2f  Y=%.2f", val1, val2);
-	                    } else if (localHeader.Identifier == 0x41) {
-	                        printf(" | Z=%.2f  Ax=%.2f", val1, val2);
-	                    } else if (localHeader.Identifier == 0x42) {
-	                        printf(" | Ay=%.2f  Az=%.2f", val1, val2);
+	                while (ret == HAL_OK) {
+	                    // 1. FIX: Calculate DLC correctly (handling raw vs encoded)
+	                    uint8_t dlc_bytes;
+	                    if (localHeader.DataLength > 0x0F) {
+	                        dlc_bytes = (localHeader.DataLength >> 16) & 0x0F;
 	                    } else {
-	                        printf(" | F1=%.2f  F2=%.2f", val1, val2);
+	                        dlc_bytes = (uint8_t)localHeader.DataLength;
 	                    }
+
+	                    printf("RECV: ID=0x%lX | DLC=%u", localHeader.Identifier, dlc_bytes);
+
+	                    // 2. Decode Data if we have a full frame
+	                    if (dlc_bytes >= 8) {
+	                        // --- Decode First 4 Bytes (Always a Float in your protocol) ---
+	                        // Bytes 0-3 are 'Distance' for ID 0x30, or 'Orient X' for ID 0x40
+	                        union { float f; uint8_t b[4]; } conv;
+	                        conv.b[0] = RxData[0];
+	                        conv.b[1] = RxData[1];
+	                        conv.b[2] = RxData[2];
+	                        conv.b[3] = RxData[3];
+	                        float val1 = conv.f;
+
+	                        // --- Decode Second 4 Bytes (Depends on ID) ---
+	                        if (localHeader.Identifier == 0x30) {
+	                            // ID 0x30: Second half is Int32 (Encoder Count)
+	                            int32_t encoderCount;
+	                            memcpy(&encoderCount, &RxData[4], sizeof(int32_t));
+
+	                            printf(" | Dist=%.2f cm | Count=%ld", val1, encoderCount);
+	                        }
+	                        else if (localHeader.Identifier == 0x40) {
+	                            // ID 0x40: Second half is Float (Orient Y)
+	                            conv.b[0] = RxData[4];
+	                            conv.b[1] = RxData[5];
+	                            conv.b[2] = RxData[6];
+	                            conv.b[3] = RxData[7];
+	                            float val2 = conv.f;
+
+	                            printf(" | X=%.2f | Y=%.2f", val1, val2);
+	                        }
+	                    }
+
+	                    printf("\r\n");
+
+	                    /* Get next message */
+	                    ret = HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &localHeader, RxData);
 	                }
-	            }
-
-	            printf("\r\n");
-
-	            /* Get next message */
-	            ret = HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &localHeader, RxData);
-	        }
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
