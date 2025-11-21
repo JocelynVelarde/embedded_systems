@@ -140,49 +140,71 @@ Error_Handler();
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
-	  while (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxHeader, RxData) != HAL_OK) {
+	  /* Robust receive loop: read one message if available and drain FIFO */
+	  FDCAN_RxHeaderTypeDef localHeader;
+	  int ret;
 
-	      uint8_t dlc_bytes = (RxHeader.DataLength >> 16) & 0x0F;
+	  /* Try to read first message */
+	  ret = HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &localHeader, RxData);
 
-	      printf("ID=0x%lX | Data: ", RxHeader.Identifier);
-	      for (int i = 0; i < dlc_bytes; i++) {
+	  /* Robust receive loop */
+	  while (ret == HAL_OK) {
+	      // FIX: Handle cases where DataLength is raw bytes (0x8) OR encoded (0x80000)
+	      uint8_t dlc_bytes;
+	      if (localHeader.DataLength > 0x0F) {
+	          // Encoded format (Standard HAL behavior: 0x00080000)
+	          dlc_bytes = (localHeader.DataLength >> 16) & 0x0F;
+	      } else {
+	          // Raw format (Your current behavior: 0x00000008)
+	          dlc_bytes = (uint8_t)localHeader.DataLength;
+	      }
+
+	      printf("RECV: ID=0x%lX | DLC=%u | Data: ",
+	              localHeader.Identifier,
+	              dlc_bytes);
+
+	      /* Print raw bytes */
+	      for (int i = 0; i < dlc_bytes && i < 8; ++i) {
 	          printf("%02X ", RxData[i]);
 	      }
 
-	      // Helper union
-	      union { float f; uint8_t b[4]; } conv;
+	      /* Decode Floats if we have a full 8-byte frame */
+	      if (dlc_bytes == 8) {
+	          union { float f; uint8_t b[4]; } conv;
 
-	      if (dlc_bytes >= 8) {
-
-	          // first float
+	          // Decode First Float (Bytes 0-3)
 	          conv.b[0] = RxData[0];
 	          conv.b[1] = RxData[1];
 	          conv.b[2] = RxData[2];
 	          conv.b[3] = RxData[3];
-	          float f1 = conv.f;
+	          float val1 = conv.f;
 
-	          // second float
+	          // Decode Second Float (Bytes 4-7)
 	          conv.b[0] = RxData[4];
 	          conv.b[1] = RxData[5];
 	          conv.b[2] = RxData[6];
 	          conv.b[3] = RxData[7];
-	          float f2 = conv.f;
+	          float val2 = conv.f;
 
-	          if (RxHeader.Identifier == 0x40) {
-	              printf(" | X=%.2f  Y=%.2f", f1, f2);
-	          }
-	          else if (RxHeader.Identifier == 0x41) {
-	              printf(" | Z=%.2f  Ax=%.2f", f1, f2);
-	          }
-	          else if (RxHeader.Identifier == 0x42) {
-	              printf(" | Ay=%.2f  Az=%.2f", f1, f2);
+	          // Map IDs to your ESP32 sender logic
+	          if (localHeader.Identifier == 0x40) {
+	              printf(" | X=%.2f  Y=%.2f", val1, val2);
+	          } else if (localHeader.Identifier == 0x41) {
+	              printf(" | Z=%.2f  Ax=%.2f", val1, val2);
+	          } else if (localHeader.Identifier == 0x42) {
+	              printf(" | Ay=%.2f  Az=%.2f", val1, val2);
+	          } else {
+	              printf(" | F1=%.2f F2=%.2f", val1, val2);
 	          }
 	      }
 
 	      printf("\r\n");
+
+	      /* Try to get next message */
+	      ret = HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &localHeader, RxData);
 	  }
 
+    /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
   }
@@ -323,7 +345,7 @@ static void MX_FDCAN1_Init(void)
   TxHeader.Identifier = 0x111;
   TxHeader.IdType = FDCAN_STANDARD_ID;
   TxHeader.TxFrameType = FDCAN_DATA_FRAME;
-  TxHeader.DataLength = FDCAN_DLC_BYTES_12;
+  TxHeader.DataLength = FDCAN_DLC_BYTES_8 ;
   TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
   TxHeader.BitRateSwitch = FDCAN_BRS_ON;
   TxHeader.FDFormat = FDCAN_FD_CAN;
